@@ -8,7 +8,7 @@
 #include "crsf.h"
 
 #ifndef calibration_joystick
-#define calibration_joystick 0
+#define calibration_joystick 1
 #endif
 
 #ifndef FPV_VERBOSE_DEBUG
