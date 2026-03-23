@@ -831,19 +831,31 @@ esp_err_t input_read_channels(uint16_t ch_out[CRSF_NUM_CHANNELS])
 
         const int filtered_int = (int)(s_last_filtered[axis] + 0.5f);
         /* Use calibrated mapping only if flag is enabled and NVS has valid data. */
+        uint16_t mapped = 0;
         if (USING_CALIBRATE && s_calib_loaded) {
             const int invert = s_axis_cfg[axis].invert ^ s_calib_invert[axis];
-            s_last_axis_crsf[axis] = map_axis_to_crsf_centered(filtered_int,
-                                                               s_calib_min[axis],
-                                                               s_calib_max[axis],
-                                                               s_calib_center[axis],
-                                                               invert);
+            mapped = map_axis_to_crsf_centered(filtered_int,
+                                               s_calib_min[axis],
+                                               s_calib_max[axis],
+                                               s_calib_center[axis],
+                                               invert);
         } else {
-            s_last_axis_crsf[axis] = map_axis_to_crsf(filtered_int,
-                                                      s_axis_cfg[axis].min_raw,
-                                                      s_axis_cfg[axis].max_raw,
-                                                      s_axis_cfg[axis].invert);
+            mapped = map_axis_to_crsf(filtered_int,
+                                      s_axis_cfg[axis].min_raw,
+                                      s_axis_cfg[axis].max_raw,
+                                      s_axis_cfg[axis].invert);
         }
+
+        if (FPV_CRSF_DEADBAND > 0 && s_filter_initialized) {
+            int diff = (int)mapped - (int)s_last_axis_crsf[axis];
+            if (diff < 0) {
+                diff = -diff;
+            }
+            if (diff < FPV_CRSF_DEADBAND) {
+                mapped = s_last_axis_crsf[axis];
+            }
+        }
+        s_last_axis_crsf[axis] = mapped;
     }
     s_filter_initialized = true;
 

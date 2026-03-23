@@ -15,6 +15,10 @@
 #define FPV_VERBOSE_DEBUG 1
 #endif
 
+#ifndef FPV_CRSF_DEADBAND
+#define FPV_CRSF_DEADBAND 7
+#endif
+
 #ifndef USING_CALIBRATE
 #define USING_CALIBRATE 1
 #endif
