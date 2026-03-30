@@ -13,35 +13,11 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "configs.h"
 #include "crsf.h"
 #include "crsf_parser.h"
 #include "input.h"
 #include "telemetry.h"
-
-/* UART CRSF defaults */
-#define FPV_UART_PORT                    UART_NUM_2
-#define FPV_UART_TX_GPIO                 GPIO_NUM_17
-#define FPV_UART_RX_GPIO                 GPIO_NUM_16
-#define FPV_UART_BAUD_RATE               416666
-#define FPV_UART_RX_BUFFER_SIZE          1024
-
-/* Enable/disable telemetry RX parsing (CRSF RX). */
-#ifndef FC_RX_ENABLE
-#define FC_RX_ENABLE                     0
-#endif
-
-/* RC frame transmit timing */
-#define FPV_RC_SEND_RATE_HZ              150
-#define FPV_RC_SEND_PERIOD_US            (1000000 / FPV_RC_SEND_RATE_HZ)
-
-/* Task settings */
-#define FPV_TASK_STACK_SIZE              4096
-#define FPV_TASK_PRIORITY_TX             8
-#define FPV_TASK_PRIORITY_RX             7
-
-/* Debug log throttling */
-#define FPV_VERBOSE_LOG_EVERY_N_PACKETS  25U
-#define FPV_INFO_LOG_EVERY_N_PACKETS     150U
 
 static const char *TAG = "fpv_main";
 static TaskHandle_t s_rc_tx_task_handle;
