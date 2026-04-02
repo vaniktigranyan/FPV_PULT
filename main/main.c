@@ -13,30 +13,11 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "configs.h"
 #include "crsf.h"
 #include "crsf_parser.h"
 #include "input.h"
 #include "telemetry.h"
-
-/* UART CRSF defaults */
-#define FPV_UART_PORT                    UART_NUM_2
-#define FPV_UART_TX_GPIO                 GPIO_NUM_17
-#define FPV_UART_RX_GPIO                 GPIO_NUM_16
-#define FPV_UART_BAUD_RATE               416666
-#define FPV_UART_RX_BUFFER_SIZE          1024
-
-/* RC frame transmit timing */
-#define FPV_RC_SEND_RATE_HZ              150
-#define FPV_RC_SEND_PERIOD_US            (1000000 / FPV_RC_SEND_RATE_HZ)
-
-/* Task settings */
-#define FPV_TASK_STACK_SIZE              4096
-#define FPV_TASK_PRIORITY_TX             8
-#define FPV_TASK_PRIORITY_RX             7
-
-/* Debug log throttling */
-#define FPV_VERBOSE_LOG_EVERY_N_PACKETS  25U
-#define FPV_INFO_LOG_EVERY_N_PACKETS     150U
 
 static const char *TAG = "fpv_main";
 static TaskHandle_t s_rc_tx_task_handle;
@@ -70,6 +51,10 @@ static esp_err_t uart_crsf_init(void)
                                      UART_PIN_NO_CHANGE,
                                      UART_PIN_NO_CHANGE),
                         TAG, "uart_set_pin failed");
+
+#if !FC_RX_ENABLE
+    ESP_RETURN_ON_ERROR(uart_disable_rx_intr(FPV_UART_PORT), TAG, "uart_disable_rx_intr failed");
+#endif
 
     ESP_LOGI(TAG, "CRSF UART configured: UART2 TX=%d RX=%d baud=%d",
              FPV_UART_TX_GPIO, FPV_UART_RX_GPIO, FPV_UART_BAUD_RATE);
@@ -205,17 +190,25 @@ void app_main(void)
                                    NULL,
                                    FPV_TASK_PRIORITY_TX,
                                    NULL);
+#if FC_RX_ENABLE
     BaseType_t ok_rx = xTaskCreate(crsf_rx_task,
                                    "crsf_rx_task",
                                    FPV_TASK_STACK_SIZE,
                                    NULL,
                                    FPV_TASK_PRIORITY_RX,
                                    NULL);
+#else
+    BaseType_t ok_rx = pdPASS;
+#endif
 
     if ((ok_tx != pdPASS) || (ok_rx != pdPASS)) {
         ESP_LOGE(TAG, "Task creation failed (tx=%ld rx=%ld)", (long)ok_tx, (long)ok_rx);
         return;
     }
 
+#if FC_RX_ENABLE
     ESP_LOGI(TAG, "Tasks started: RC TX @ %d Hz, telemetry RX enabled", FPV_RC_SEND_RATE_HZ);
+#else
+    ESP_LOGI(TAG, "Tasks started: RC TX @ %d Hz, telemetry RX disabled", FPV_RC_SEND_RATE_HZ);
+#endif
 }

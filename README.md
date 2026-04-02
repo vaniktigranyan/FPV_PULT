@@ -40,7 +40,7 @@ GPIO33 --+ Pitch OUT          |                       | Yaw OUT ---------+---- G
         |  AUX1 (GPIO21) ---[SW]--- GND    (INPUT_PULLUP, ON=LOW)                   |
         |  AUX2 (GPIO22) ---[SW]--- GND    (INPUT_PULLUP, ON=LOW)                   |
         |  AUX3 (GPIO23) ---[SW]--- GND    (INPUT_PULLUP, ON=LOW)                   |
-        |  AUX4 (GPIO25) ---[SW]--- GND    (INPUT_PULLUP, ON=LOW)                   |
+        |  AUX4 (GPIO19) ---[SW]--- GND    (INPUT_PULLUP, ON=LOW)                   |
         |                                                                           |
         +---------------------------------------------------------------------------+
 
@@ -60,7 +60,7 @@ GPIO33 --+ Pitch OUT          |                       | Yaw OUT ---------+---- G
   - AUX1: `GPIO21`
   - AUX2: `GPIO22`
   - AUX3: `GPIO23`
-  - AUX4: `GPIO25`
+  - AUX4: `GPIO19`
 - UART2:
   - TX: `GPIO17`
   - RX: `GPIO16`
@@ -83,6 +83,7 @@ GPIO33 --+ Pitch OUT          |                       | Yaw OUT ---------+---- G
 - `main/crsf_parser.c`, `main/crsf_parser.h` — парсер входящих CRSF кадров
 - `main/input.c`, `main/input.h` — ADC + фильтрация + калибровка + AUX
 - `main/telemetry.c`, `main/telemetry.h` — обработка и логирование telemetry
+- `main/configs.h` — все изменяемые `#define` (пины, калибровка, режимы)
 
 **Сборка и прошивка**
 ```bash
@@ -91,21 +92,60 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
-**Настройки через `#define`**
-Основные макросы находятся в:
-- `main/main.c` — UART, частота отправки, задачи
-- `main/input.c` — GPIO, ADC, калибровка, EMA, уровни AUX
+**Настройки через `#define` (все находятся в `main/configs.h`)**
 
-Типичные параметры:
-```c
-#define FPV_UART_BAUD_RATE 416666
-#define FPV_RC_SEND_RATE_HZ 150
-#define FPV_ADC_EMA_ALPHA 0.20f
-#define FPV_ADC_ROLL_MIN 200
-#define FPV_ADC_ROLL_MAX 3900
-#define FPV_AUX_ON_VALUE CRSF_CH_MAX
-#define FPV_AUX_OFF_VALUE CRSF_CH_MIN
-```
+**UART / задачи / логи**
+| Макрос | Значение по умолчанию | Назначение |
+|---|---|---|
+| `FPV_UART_PORT` | `UART_NUM_2` | UART порт для CRSF |
+| `FPV_UART_TX_GPIO` | `GPIO17` | TX пин UART |
+| `FPV_UART_RX_GPIO` | `GPIO16` | RX пин UART |
+| `FPV_UART_BAUD_RATE` | `416666` | Скорость CRSF |
+| `FPV_UART_RX_BUFFER_SIZE` | `1024` | Размер RX буфера UART |
+| `FC_RX_ENABLE` | `0` | Включить/выключить RX парсер (0 = отключить) |
+| `FPV_RC_SEND_RATE_HZ` | `150` | Частота отправки RC пакетов |
+| `FPV_TASK_STACK_SIZE` | `4096` | Размер стека задач |
+| `FPV_TASK_PRIORITY_TX` | `8` | Приоритет TX задачи |
+| `FPV_TASK_PRIORITY_RX` | `7` | Приоритет RX задачи |
+| `FPV_VERBOSE_LOG_EVERY_N_PACKETS` | `25` | Частота подробных логов |
+| `FPV_INFO_LOG_EVERY_N_PACKETS` | `150` | Частота обычных логов |
+
+**Режимы и базовые флаги**
+| Макрос | Значение по умолчанию | Назначение |
+|---|---|---|
+| `calibration_joystick` | `0` | Включить режим калибровки при старте |
+| `USING_CALIBRATE` | `1` | Использовать данные калибровки из NVS |
+| `FPV_VERBOSE_DEBUG` | `1` | Включить подробный debug в консоль |
+| `FPV_CRSF_DEADBAND` | `7` | Deadband (в CRSF единицах) для CH1..CH4 |
+
+**Железо, фильтрация, калибровка**
+| Макрос | Значение по умолчанию | Назначение |
+|---|---|---|
+| `FPV_ADC_*_GPIO` | `GPIO32/33/34/35` | Пины осей Roll/Pitch/Throttle/Yaw |
+| `FPV_ADC_*_CH` | `ADC_CHANNEL_4..7` | Каналы ADC1 |
+| `FPV_ADC_ATTEN` | `ADC_ATTEN_DB_12` | Аттенюация ADC |
+| `FPV_ADC_BITWIDTH` | `ADC_BITWIDTH_DEFAULT` | Разрядность ADC |
+| `FPV_ADC_*_MIN/MAX` | `200/3900` | Мин/макс сырого ADC (по умолчанию) |
+| `FPV_*_INVERT` | `0` | Инверсия осей (0/1) |
+| `FPV_ADC_EMA_ALPHA` | `0.20f` | EMA фильтр (чем больше — тем быстрее) |
+| `FPV_SWITCH_AUX*_GPIO` | `GPIO21/22/23/19` | Пины AUX переключателей |
+| `FPV_SWITCH_ON_LEVEL` | `0` | ON = LOW (pull-up) |
+| `FPV_AUX_ON_VALUE` | `CRSF_CH_MAX` | Значение AUX при ON |
+| `FPV_AUX_OFF_VALUE` | `CRSF_CH_MIN` | Значение AUX при OFF |
+| `FPV_BUZZER_GPIO` | `GPIO5` | Пин пищалки |
+| `FPV_BUZZER_ACTIVE_LEVEL` | `1` | Активный уровень пищалки |
+| `FPV_BUZZER_BEEP_MS` | `80` | Длительность писка |
+| `FPV_BUZZER_GAP_MS` | `60` | Пауза между писками |
+| `FPV_BUZZER_STARTUP_ENABLE` | `1` | Включить мелодию при старте |
+| `FPV_BUZZER_STARTUP_GAP_MS` | `80` | Пауза между писками мелодии |
+| `FPV_BUZZER_STARTUP_BEEP1_MS` | `60` | Длительность писка 1 |
+| `FPV_BUZZER_STARTUP_BEEP2_MS` | `90` | Длительность писка 2 |
+| `FPV_BUZZER_STARTUP_BEEP3_MS` | `130` | Длительность писка 3 |
+| `FPV_CALIB_CENTER_MIN/MAX` | `1600/2100` | Диапазон центра для калибровки |
+| `FPV_CALIB_MIN_MIN/MAX` | `0/200` | Диапазон минимума для калибровки |
+| `FPV_CALIB_MAX_MIN/MAX` | `3600/4096` | Диапазон максимума для калибровки |
+| `FPV_CALIB_EXTREME_STABLE_DELTA` | `120` | Допуск стабильности в экстремуме |
+| `FPV_CALIB_EXTREME_STABLE_MS` | `800` | Время удержания экстремума |
 
 **Логирование**
 - Базовые логи всегда через `ESP_LOGI/W/E`.

@@ -14,88 +14,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 
-/* Analog axis GPIO defaults (ADC1 only) */
-#define FPV_ADC_ROLL_GPIO              GPIO_NUM_32
-#define FPV_ADC_PITCH_GPIO             GPIO_NUM_33
-#define FPV_ADC_THROTTLE_GPIO          GPIO_NUM_34
-#define FPV_ADC_YAW_GPIO               GPIO_NUM_35
-
-/* ADC1 channel mapping for ESP32 */
-#define FPV_ADC_ROLL_CH                ADC_CHANNEL_4
-#define FPV_ADC_PITCH_CH               ADC_CHANNEL_5
-#define FPV_ADC_THROTTLE_CH            ADC_CHANNEL_6
-#define FPV_ADC_YAW_CH                 ADC_CHANNEL_7
-
-#define FPV_ADC_ATTEN                  ADC_ATTEN_DB_12
-#define FPV_ADC_BITWIDTH               ADC_BITWIDTH_DEFAULT
-
-/* Fixed calibration defaults per axis */
-#define FPV_ADC_ROLL_MIN               200
-#define FPV_ADC_ROLL_MAX               3900
-#define FPV_ADC_PITCH_MIN              200
-#define FPV_ADC_PITCH_MAX              3900
-#define FPV_ADC_THROTTLE_MIN           200
-#define FPV_ADC_THROTTLE_MAX           3900
-#define FPV_ADC_YAW_MIN                200
-#define FPV_ADC_YAW_MAX                3900
-
-/* Axis inversion flags: 0 = normal, 1 = inverted
- * Can be combined with auto-inversion detected during calibration. */
-#define FPV_ROLL_INVERT                0
-#define FPV_PITCH_INVERT               0
-#define FPV_THROTTLE_INVERT            0
-#define FPV_YAW_INVERT                 0
-
-/* EMA filter coefficient for smoothing ADC noise */
-#define FPV_ADC_EMA_ALPHA              0.20f
-
-/* Switch GPIO defaults (active-low with pull-up)
- * ON = LOW (pulled to GND), OFF = HIGH (internal pull-up). */
-#define FPV_SWITCH_AUX1_GPIO           GPIO_NUM_21
-#define FPV_SWITCH_AUX2_GPIO           GPIO_NUM_22
-#define FPV_SWITCH_AUX3_GPIO           GPIO_NUM_23
-#define FPV_SWITCH_AUX4_GPIO           GPIO_NUM_25
-
-#define FPV_SWITCH_ON_LEVEL            0
-
-#define FPV_AUX_ON_VALUE               CRSF_CH_MAX
-#define FPV_AUX_OFF_VALUE              CRSF_CH_MIN
-
-/* Buzzer (active-high)
- * Short beep is used as confirmation for each calibration step. */
-#define FPV_BUZZER_GPIO                GPIO_NUM_27
-#define FPV_BUZZER_ACTIVE_LEVEL        1
-#define FPV_BUZZER_BEEP_MS             80
-#define FPV_BUZZER_GAP_MS              60
-
-/* NVS namespace for calibration
- * Stores min/max/center per axis and "calib_done" flag. */
-#define FPV_CALIB_NAMESPACE            "fpv_calib"
-#define FPV_CALIB_DONE_KEY             "calib_done"
-
-/* Calibration behavior
- * These thresholds control stability detection and logging during calibration. */
-#define FPV_CALIB_MOVE_THRESHOLD       60
-#define FPV_CALIB_STABLE_DELTA         8
-#define FPV_CALIB_STABLE_SAMPLES       12
-#define FPV_CALIB_SAMPLE_COUNT         8
-#define FPV_CALIB_SAMPLE_DELAY_MS      5
-#define FPV_CALIB_CENTER_STABLE_DELTA  50
-#define FPV_CALIB_CENTER_STABLE_SAMPLES 15
-
-/* ADC ranges for calibration acceptance
- * Center must be in CENTER_MIN..CENTER_MAX,
- * Min must be in MIN_MIN..MIN_MAX,
- * Max must be in MAX_MIN..MAX_MAX. */
-#define FPV_CALIB_CENTER_MIN           1600
-#define FPV_CALIB_CENTER_MAX           2100
-#define FPV_CALIB_MIN_MIN              0
-#define FPV_CALIB_MIN_MAX              200
-#define FPV_CALIB_MAX_MIN              3600
-#define FPV_CALIB_MAX_MAX              4096
-#define FPV_CALIB_LOG_EVERY_MS         500
-#define FPV_CALIB_EXTREME_STABLE_DELTA 120
-#define FPV_CALIB_EXTREME_STABLE_MS    800
+/* Configuration macros are centralized in configs.h. */
 
 typedef enum {
     AXIS_ROLL = 0,
@@ -305,6 +224,25 @@ static void buzzer_beep(void)
     vTaskDelay(pdMS_TO_TICKS(FPV_BUZZER_BEEP_MS));
     gpio_set_level(FPV_BUZZER_GPIO, !FPV_BUZZER_ACTIVE_LEVEL);
     vTaskDelay(pdMS_TO_TICKS(FPV_BUZZER_GAP_MS));
+}
+
+/* Startup melody (simple on/off pattern, no PWM tones). */
+static void buzzer_startup_melody(void)
+{
+#if FPV_BUZZER_STARTUP_ENABLE
+    const int melody_ms[] = {
+        FPV_BUZZER_STARTUP_BEEP1_MS,
+        FPV_BUZZER_STARTUP_BEEP2_MS,
+        FPV_BUZZER_STARTUP_BEEP3_MS
+    };
+
+    for (size_t i = 0; i < sizeof(melody_ms) / sizeof(melody_ms[0]); ++i) {
+        gpio_set_level(FPV_BUZZER_GPIO, FPV_BUZZER_ACTIVE_LEVEL);
+        vTaskDelay(pdMS_TO_TICKS(melody_ms[i]));
+        gpio_set_level(FPV_BUZZER_GPIO, !FPV_BUZZER_ACTIVE_LEVEL);
+        vTaskDelay(pdMS_TO_TICKS(FPV_BUZZER_STARTUP_GAP_MS));
+    }
+#endif
 }
 
 /* Default calibration from build-time macros (fallback when NVS is empty). */
@@ -801,6 +739,7 @@ esp_err_t input_init(void)
 
     /* Buzzer is optional; used only for calibration feedback. */
     buzzer_init();
+    buzzer_startup_melody();
     ESP_LOGI(TAG, "Input init done (ADC1: GPIO32/33/34/35, switches: GPIO21/22/23/25)");
     return ESP_OK;
 }
@@ -831,19 +770,42 @@ esp_err_t input_read_channels(uint16_t ch_out[CRSF_NUM_CHANNELS])
 
         const int filtered_int = (int)(s_last_filtered[axis] + 0.5f);
         /* Use calibrated mapping only if flag is enabled and NVS has valid data. */
+        uint16_t mapped = 0;
         if (USING_CALIBRATE && s_calib_loaded) {
             const int invert = s_axis_cfg[axis].invert ^ s_calib_invert[axis];
-            s_last_axis_crsf[axis] = map_axis_to_crsf_centered(filtered_int,
-                                                               s_calib_min[axis],
-                                                               s_calib_max[axis],
-                                                               s_calib_center[axis],
-                                                               invert);
+            mapped = map_axis_to_crsf_centered(filtered_int,
+                                               s_calib_min[axis],
+                                               s_calib_max[axis],
+                                               s_calib_center[axis],
+                                               invert);
         } else {
-            s_last_axis_crsf[axis] = map_axis_to_crsf(filtered_int,
-                                                      s_axis_cfg[axis].min_raw,
-                                                      s_axis_cfg[axis].max_raw,
-                                                      s_axis_cfg[axis].invert);
+            mapped = map_axis_to_crsf(filtered_int,
+                                      s_axis_cfg[axis].min_raw,
+                                      s_axis_cfg[axis].max_raw,
+                                      s_axis_cfg[axis].invert);
         }
+
+        if (FPV_CENTER_SNAP_ENABLE &&
+            (axis == AXIS_ROLL || axis == AXIS_PITCH || axis == AXIS_YAW)) {
+            int delta = (int)mapped - (int)CRSF_CH_MID;
+            if (delta < 0) {
+                delta = -delta;
+            }
+            if (delta <= FPV_CENTER_SNAP_DELTA) {
+                mapped = CRSF_CH_MID;
+            }
+        }
+
+        if (FPV_CRSF_DEADBAND > 0 && s_filter_initialized) {
+            int diff = (int)mapped - (int)s_last_axis_crsf[axis];
+            if (diff < 0) {
+                diff = -diff;
+            }
+            if (diff < FPV_CRSF_DEADBAND) {
+                mapped = s_last_axis_crsf[axis];
+            }
+        }
+        s_last_axis_crsf[axis] = mapped;
     }
     s_filter_initialized = true;
 
